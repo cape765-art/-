@@ -1,0 +1,6 @@
+{
+  "name": "校史榮譽典藏館",
+  "description": "學校獎盃、獎牌與獎狀數位拍照典藏平台，完整記錄獎項名稱、名次、日期與主辦單位。",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": []
+}

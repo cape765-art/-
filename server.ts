@@ -1,0 +1,2071 @@
+import express from 'express';
+import type { Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+type AwardCategory = 'trophy' | 'medal' | 'certificate';
+
+interface AwardRecord {
+  id: string;
+  accessionNumber: string;
+  category: AwardCategory;
+  awardName: string;
+  rank: string;
+  awardDate: string;
+  organizer: string;
+  recipient: string;
+  storageNote: string;
+  imageUrl: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface BatchImportRow {
+  accessionNumber?: string;
+  category?: string;
+  awardName?: string;
+  rank?: string;
+  awardDate?: string;
+  organizer?: string;
+  recipient?: string;
+  storageNote?: string;
+  imageDataUrl?: string;
+}
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const DATA_DIR = path.resolve(__dirname, 'data');
+const UPLOADS_DIR = path.resolve(DATA_DIR, 'uploads');
+const AWARDS_FILE = path.resolve(DATA_DIR, 'awards.json');
+
+const ALLOWED_CATEGORIES: ReadonlySet<string> = new Set([
+  'trophy',
+  'medal',
+  'certificate',
+]);
+
+const SEED_AWARDS: AwardRecord[] = [
+  {
+    id: 'trophy-1140813',
+    accessionNumber: 'ACC-2025-007',
+    category: 'trophy',
+    awardName: '宜蘭縣114年度基層運動選手訓練站足球區域性對抗賽 國小組',
+    rank: '殿軍',
+    awardDate: '2025-08-13',
+    organizer: '宜蘭縣政府（代理縣長 林茂盛 敬贈）',
+    recipient: '本校國小組足球隊',
+    storageNote: '民國114年8月13日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1140813__________________3fafdeee.jpg',
+    createdAt: '2025-08-13T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1140614-double',
+    accessionNumber: 'ACC-2025-006',
+    category: 'trophy',
+    awardName: '114年宜蘭縣龍獅盃技藝錦標賽 醒獅 雙獅 國小組',
+    rank: '第一名',
+    awardDate: '2025-06-14',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（代理縣長 林茂盛、主任委員 簡維國 敬贈）',
+    recipient: '本校醒獅團雙獅國小組',
+    storageNote: '民國114年6月14日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1140614______________________5e1b1536.jpg',
+    createdAt: '2025-06-14T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1140614-multi',
+    accessionNumber: 'ACC-2025-005',
+    category: 'trophy',
+    awardName: '114年宜蘭縣龍獅盃技藝錦標賽 醒獅 多獅 國小組',
+    rank: '第一名',
+    awardDate: '2025-06-14',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（代理縣長 林茂盛、主任委員 簡維國 敬贈）',
+    recipient: '本校醒獅團多獅國小組',
+    storageNote: '民國114年6月14日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1140614______________________c1929d99.jpg',
+    createdAt: '2025-06-14T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1140525',
+    accessionNumber: 'ACC-2025-004',
+    category: 'trophy',
+    awardName: '114年宜蘭縣主委盃足球錦標賽 國小男生11歲組',
+    rank: '冠軍',
+    awardDate: '2025-05-25',
+    organizer: '宜蘭縣體育會足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校國小男生 11 歲組足球隊',
+    storageNote: '民國114年5月25日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1140525_______________11_____44b806f6.jpg',
+    createdAt: '2025-05-25T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1140123-u12',
+    accessionNumber: 'ACC-2025-003',
+    category: 'trophy',
+    awardName: '2025年冬季武士岸盃足球邀請賽 U12組雲豹',
+    rank: '亞軍',
+    awardDate: '2025-01-23',
+    organizer: '花蓮縣秀林鄉武士岸文教協會（理事長 李中正 敬贈）',
+    recipient: '本校 U12 足球隊',
+    storageNote: '民國114年1月23日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1140123___________U12____d3a9ea51.jpg',
+    createdAt: '2025-01-23T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1140123-u10',
+    accessionNumber: 'ACC-2025-002',
+    category: 'trophy',
+    awardName: '2025年冬季武士岸盃足球邀請賽 U10組山羊',
+    rank: '冠軍',
+    awardDate: '2025-01-23',
+    organizer: '花蓮縣秀林鄉武士岸文教協會（理事長 李中正 敬贈）',
+    recipient: '本校 U10 足球隊',
+    storageNote: '民國114年1月23日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1140123___________U10____4b60068e.jpg',
+    createdAt: '2025-01-23T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1140113',
+    accessionNumber: 'ACC-2025-001',
+    category: 'trophy',
+    awardName: '第20屆天母盃足球邀請賽',
+    rank: '季軍',
+    awardDate: '2025-01-13',
+    organizer: '臺北市士林區天母國民小學（校長 邱雅莉）',
+    recipient: '本校足球隊',
+    storageNote: '2025年1月13日（民國114年）獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1140113_20____________7fbe9163.jpg',
+    createdAt: '2025-01-13T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1131110',
+    accessionNumber: 'ACC-2024-007',
+    category: 'trophy',
+    awardName: '113年宜蘭縣學童盃足球錦標賽 U10組',
+    rank: '季軍',
+    awardDate: '2024-11-10',
+    organizer: '宜蘭縣體育會足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校 U10 足球隊',
+    storageNote: '民國113年11月10日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1131110___________U10____d0fac0be.jpg',
+    createdAt: '2024-11-10T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1130615-double',
+    accessionNumber: 'ACC-2024-006',
+    category: 'trophy',
+    awardName: '113年宜蘭縣龍獅盃技藝錦標賽 醒獅 雙獅-國小組',
+    rank: '第一名',
+    awardDate: '2024-06-15',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（縣長 林姿妙、主任委員 簡維國 贈）',
+    recipient: '本校醒獅團雙獅國小組',
+    storageNote: '民國113年6月15日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1130615______________________46cd003b.jpg',
+    createdAt: '2024-06-15T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1130615-single',
+    accessionNumber: 'ACC-2024-005',
+    category: 'trophy',
+    awardName: '113年宜蘭縣龍獅盃技藝錦標賽 醒獅 單獅-國小組',
+    rank: '第三名',
+    awardDate: '2024-06-15',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（縣長 林姿妙、主任委員 簡維國 贈）',
+    recipient: '本校醒獅團單獅國小組',
+    storageNote: '民國113年6月15日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1130615______________________8c05f98f.jpg',
+    createdAt: '2024-06-15T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1130602-u13',
+    accessionNumber: 'ACC-2024-004',
+    category: 'trophy',
+    awardName: '113年宜蘭縣主委盃足球錦標賽 國小男生U13組',
+    rank: '殿軍',
+    awardDate: '2024-06-02',
+    organizer: '宜蘭縣體育會足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校國小男生 U13 足球隊',
+    storageNote: '民國113年6月2日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1130602_______________U13____f9d4024d.jpg',
+    createdAt: '2024-06-02T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1130602-u9',
+    accessionNumber: 'ACC-2024-003',
+    category: 'trophy',
+    awardName: '113年宜蘭縣主委盃足球錦標賽 國小男生U9組',
+    rank: '季軍',
+    awardDate: '2024-06-02',
+    organizer: '宜蘭縣體育會足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校國小男生 U9 足球隊',
+    storageNote: '民國113年6月2日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1130602_______________U9____2b1296ce.jpg',
+    createdAt: '2024-06-02T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1130601',
+    accessionNumber: 'ACC-2024-002',
+    category: 'trophy',
+    awardName: '112學年度宜蘭縣中小學足球錦標賽 國小甲組',
+    rank: '殿軍',
+    awardDate: '2024-06-01',
+    organizer: '宜蘭縣政府（縣長 林姿妙 敬贈）',
+    recipient: '本校國小甲組足球隊',
+    storageNote: '民國113年6月1日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1130601__________________7aa38f61.jpg',
+    createdAt: '2024-06-01T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1130331',
+    accessionNumber: 'ACC-2024-001',
+    category: 'trophy',
+    awardName: '113年第二屆宜蘭縣葛瑪蘭盃全國足球邀請賽 國小U11組',
+    rank: '殿軍',
+    awardDate: '2024-03-31',
+    organizer: '社團法人宜蘭縣葛瑪蘭足球協會（宜蘭縣長 林姿妙、縣議員 林岳賢 贈）',
+    recipient: '本校國小 U11 足球隊',
+    storageNote: '民國113年3月31日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1030331___________________U11____08b71fad.jpg',
+    createdAt: '2024-03-31T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1121215',
+    accessionNumber: 'ACC-2023-012',
+    category: 'trophy',
+    awardName: '宜蘭縣112年度環教訪視特優',
+    rank: '出類拔萃',
+    awardDate: '2023-12-15',
+    organizer: '宜蘭縣政府（宜蘭縣長 林姿妙 敬賀）',
+    recipient: '本校（七賢國小）',
+    storageNote: '民國112年12月15日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1121215___112_________2aec5426.jpg',
+    createdAt: '2023-12-15T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1121210',
+    accessionNumber: 'ACC-2023-011',
+    category: 'trophy',
+    awardName: '112年宜蘭縣學童盃足球錦標賽 U12組',
+    rank: '冠軍',
+    awardDate: '2023-12-10',
+    organizer: '宜蘭縣體育會足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校 U12 足球隊',
+    storageNote: '民國112年12月10日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1121210___________U12____b6501306.jpg',
+    createdAt: '2023-12-10T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1120813-u12',
+    accessionNumber: 'ACC-2023-010',
+    category: 'trophy',
+    awardName: '2023年全國遠來盃足球邀請賽 U12盤賽組',
+    rank: '冠軍',
+    awardDate: '2023-08-13',
+    organizer: '宜蘭縣足球協會（理事長 簡金富）',
+    recipient: '本校 U12 足球隊',
+    storageNote: '民國112年8月13日獲頒（實體冠軍錦旗）· 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1120813__________U12___a594c161.jpg',
+    createdAt: '2023-08-13T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1120813-u8',
+    accessionNumber: 'ACC-2023-009',
+    category: 'trophy',
+    awardName: '2023年全國遠來盃足球邀請賽 U8盤賽組',
+    rank: '亞軍',
+    awardDate: '2023-08-13',
+    organizer: '宜蘭縣足球協會（理事長 簡金富）',
+    recipient: '本校 U8 足球隊',
+    storageNote: '民國112年8月13日獲頒（實體亞軍錦旗）· 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1120813__________U8___eb730ecd.jpg',
+    createdAt: '2023-08-13T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1120810',
+    accessionNumber: 'ACC-2023-008',
+    category: 'trophy',
+    awardName: '宜蘭縣112年基層運動選手訓練站足球區域性對抗賽 國小組',
+    rank: '季軍',
+    awardDate: '2023-08-10',
+    organizer: '宜蘭縣政府（縣長 林姿妙 敬贈）',
+    recipient: '本校國小組足球隊',
+    storageNote: '民國112年8月10日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1120810_________________c31d3e4f.jpg',
+    createdAt: '2023-08-10T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1120610-multi',
+    accessionNumber: 'ACC-2023-007',
+    category: 'trophy',
+    awardName: '112年宜蘭縣龍獅盃技藝錦標賽 醒獅 多獅-國小組',
+    rank: '第二名',
+    awardDate: '2023-06-10',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（縣長 林姿妙、主任委員 簡維國）',
+    recipient: '本校醒獅團多獅國小組',
+    storageNote: '民國112年6月10日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1120610______________________1c7fc091.jpg',
+    createdAt: '2023-06-10T09:10:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1120610-double',
+    accessionNumber: 'ACC-2023-006',
+    category: 'trophy',
+    awardName: '112年宜蘭縣龍獅盃技藝錦標賽 醒獅 雙獅-國小組',
+    rank: '第二名',
+    awardDate: '2023-06-10',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（縣長 林姿妙、主任委員 簡維國）',
+    recipient: '本校醒獅團雙獅國小組',
+    storageNote: '民國112年6月10日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1120610______________________b5984eed.jpg',
+    createdAt: '2023-06-10T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1120610-single',
+    accessionNumber: 'ACC-2023-005',
+    category: 'trophy',
+    awardName: '112年宜蘭縣龍獅盃技藝錦標賽 醒獅 單獅-國小組',
+    rank: '第三名',
+    awardDate: '2023-06-10',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（縣長 林姿妙、主任委員 簡維國）',
+    recipient: '本校醒獅團單獅國小組',
+    storageNote: '民國112年6月10日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1120610______________________1948ec0b.jpg',
+    createdAt: '2023-06-10T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1120423-u11',
+    accessionNumber: 'ACC-2023-004',
+    category: 'trophy',
+    awardName: '112年宜蘭縣主委盃足球錦標賽 國小U11歲組',
+    rank: '殿軍',
+    awardDate: '2023-04-23',
+    organizer: '宜蘭縣體育會足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校國小 U11 足球隊',
+    storageNote: '民國112年4月23日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1120423_____________U11____e8c75289.jpg',
+    createdAt: '2023-04-23T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1120423-u9',
+    accessionNumber: 'ACC-2023-003',
+    category: 'trophy',
+    awardName: '112年宜蘭縣主委盃足球錦標賽 國小U9歲組',
+    rank: '亞軍',
+    awardDate: '2023-04-23',
+    organizer: '宜蘭縣體育會足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校國小 U9 足球隊',
+    storageNote: '民國112年4月23日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1120423_____________U9____30744c16.jpg',
+    createdAt: '2023-04-23T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1120212-u12',
+    accessionNumber: 'ACC-2023-002',
+    category: 'trophy',
+    awardName: '112年羅東鎮鎮長盃足球錦標賽 U12組',
+    rank: '季軍',
+    awardDate: '2023-02-12',
+    organizer: '羅東鎮公所（羅東鎮長 吳秋齡 贈）',
+    recipient: '本校 U12 足球隊',
+    storageNote: '民國112年2月12日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1120212___________U12____bcb84d95.jpg',
+    createdAt: '2023-02-12T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1120212-u8',
+    accessionNumber: 'ACC-2023-001',
+    category: 'trophy',
+    awardName: '112年羅東鎮鎮長盃足球錦標賽 U8組',
+    rank: '亞軍',
+    awardDate: '2023-02-12',
+    organizer: '羅東鎮公所（羅東鎮長 吳秋齡 贈）',
+    recipient: '本校 U8 足球隊',
+    storageNote: '民國112年2月12日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1120212___________U8____b56a89dd.jpg',
+    createdAt: '2023-02-12T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1111224',
+    accessionNumber: 'ACC-2022-006',
+    category: 'trophy',
+    awardName: '111年度宜蘭縣學童盃足球錦標賽 女生組',
+    rank: '冠軍',
+    awardDate: '2022-12-24',
+    organizer: '宜蘭縣體育會足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校女生組足球隊',
+    storageNote: '民國111年12月24日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1111224_________________bdf7990f.jpg',
+    createdAt: '2022-12-24T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1111022-multi',
+    accessionNumber: 'ACC-2022-005',
+    category: 'trophy',
+    awardName: '111年宜蘭縣龍獅盃技藝錦標賽 醒獅 多獅-國小組',
+    rank: '第二名',
+    awardDate: '2022-10-22',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（縣長 林姿妙、主任委員 簡維國）',
+    recipient: '本校醒獅團多獅國小組',
+    storageNote: '民國111年10月22日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1111022______________________9fdb3df8.jpg',
+    createdAt: '2022-10-22T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1111022-single',
+    accessionNumber: 'ACC-2022-004',
+    category: 'trophy',
+    awardName: '111年宜蘭縣龍獅盃技藝錦標賽 醒獅 單獅-國小組',
+    rank: '第二名',
+    awardDate: '2022-10-22',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（縣長 林姿妙、主任委員 簡維國）',
+    recipient: '本校醒獅團單獅國小組',
+    storageNote: '民國111年10月22日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1111022______________________5e54d193.jpg',
+    createdAt: '2022-10-22T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1110925',
+    accessionNumber: 'ACC-2022-003',
+    category: 'trophy',
+    awardName: '111年宜蘭縣主委盃足球錦標賽 女生組',
+    rank: '冠軍',
+    awardDate: '2022-09-25',
+    organizer: '宜蘭縣足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校女生組足球隊',
+    storageNote: '民國111年9月25日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1110925___________________b5ecdcf2.jpg',
+    createdAt: '2022-09-25T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1110817',
+    accessionNumber: 'ACC-2022-002',
+    category: 'trophy',
+    awardName: '宜蘭縣111年基層運動選手訓練站足球區域性對抗賽 國小組',
+    rank: '殿軍',
+    awardDate: '2022-08-17',
+    organizer: '宜蘭縣政府（縣長 林姿妙 敬贈）',
+    recipient: '本校國小組足球隊',
+    storageNote: '民國111年8月17日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1110817___________b467457f.jpg',
+    createdAt: '2022-08-17T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-toucheng-mayor',
+    accessionNumber: 'ACC-2022-001',
+    category: 'trophy',
+    awardName: '頭城鎮鎮長盃五人制足球邀請賽',
+    rank: '季軍',
+    awardDate: '2022-01-01',
+    organizer: '頭城國小足球隊家長後援會 贈',
+    recipient: '本校五人制足球隊',
+    storageNote: '獲頒年份待考（銘牌未標註日期，暫以2022年元旦建檔，可編輯補登）· 已完成去背建檔',
+    imageUrl: '/assets/aistudio/_________________abe97d00.jpg',
+    createdAt: '2022-01-01T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1101127-u12',
+    accessionNumber: 'ACC-2021-010',
+    category: 'trophy',
+    awardName: '台泥士敏盃足球賽 U12組-盃賽',
+    rank: '冠軍',
+    awardDate: '2021-11-27',
+    organizer: '台灣水泥公司蘇澳廠、士敏國小',
+    recipient: '本校 U12 足球隊',
+    storageNote: '民國110年11月27日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1101127_____U12__1ea36bcc.jpg',
+    createdAt: '2021-11-27T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1101127-u10',
+    accessionNumber: 'ACC-2021-009',
+    category: 'trophy',
+    awardName: '台泥士敏盃足球賽 U10組-盃賽',
+    rank: '亞軍',
+    awardDate: '2021-11-27',
+    organizer: '台灣水泥公司蘇澳廠、士敏國小',
+    recipient: '本校 U10 足球隊',
+    storageNote: '民國110年11月27日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1101127_____U10___bfdd7e7a.jpg',
+    createdAt: '2021-11-27T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1101106-multi',
+    accessionNumber: 'ACC-2021-008',
+    category: 'trophy',
+    awardName: '2021全國聖母盃舞龍舞獅錦標賽 國小組 傳統多獅',
+    rank: '優等',
+    awardDate: '2021-11-06',
+    organizer: '財團法人台北市關渡宮、臺北市體育總會舞龍舞獅協會 敬賀',
+    recipient: '本校醒獅團國小組',
+    storageNote: '民國110年11月6日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1101106______________________9f1ef3f4.jpg',
+    createdAt: '2021-11-06T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1101106-single',
+    accessionNumber: 'ACC-2021-007',
+    category: 'trophy',
+    awardName: '2021全國聖母盃舞龍舞獅錦標賽 國小組 傳統單獅',
+    rank: '優等',
+    awardDate: '2021-11-06',
+    organizer: '財團法人台北市關渡宮、臺北市體育總會舞龍舞獅協會 敬賀',
+    recipient: '本校醒獅團國小組',
+    storageNote: '民國110年11月6日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1101106______________________e21b6d00.jpg',
+    createdAt: '2021-11-06T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1100305',
+    accessionNumber: 'ACC-2021-006',
+    category: 'trophy',
+    awardName: '109學年度宜蘭縣中小學運動會 男童乙組徑賽錦標',
+    rank: '第三名',
+    awardDate: '2021-03-05',
+    organizer: '宜蘭縣政府（宜蘭縣長 林姿妙 贈）',
+    recipient: '本校男童乙組田徑隊',
+    storageNote: '民國110年3月3日至5日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1100305_____________________ffd109c2.jpg',
+    createdAt: '2021-03-05T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1100200',
+    accessionNumber: 'ACC-2021-005',
+    category: 'trophy',
+    awardName: '第一屆宜蘭縣五人制足球理事長盃 U12組',
+    rank: '亞軍',
+    awardDate: '2021-02-01',
+    organizer: '宜蘭縣五人制足球協會（蔡文益 議員 贈）',
+    recipient: '本校 U12 五人制足球隊',
+    storageNote: '民國110年2月獲頒（銘牌未標註確切日）· 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1100200_________U12____6a22c8be.jpg',
+    createdAt: '2021-02-01T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1100124-u8',
+    accessionNumber: 'ACC-2021-004',
+    category: 'trophy',
+    awardName: '110年羅東鎮鎮長盃足球錦標賽 U8組-金盤賽',
+    rank: '冠軍',
+    awardDate: '2021-01-24',
+    organizer: '羅東鎮公所（羅東鎮長 吳秋齡 贈）',
+    recipient: '本校 U8 足球隊',
+    storageNote: '民國110年1月24日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1100124______U8___cfd4bc3e.jpg',
+    createdAt: '2021-01-24T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1100124-u10',
+    accessionNumber: 'ACC-2021-003',
+    category: 'trophy',
+    awardName: '110年羅東鎮鎮長盃足球錦標賽 U10組',
+    rank: '殿軍',
+    awardDate: '2021-01-24',
+    organizer: '羅東鎮公所（羅東鎮長 吳秋齡 贈）',
+    recipient: '本校 U10 足球隊',
+    storageNote: '民國110年1月24日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1100124___________U10____5aeddb1d.jpg',
+    createdAt: '2021-01-24T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1100000-u13',
+    accessionNumber: 'ACC-2021-002',
+    category: 'trophy',
+    awardName: '110年宜蘭縣主委盃足球錦標賽 國小13歲組',
+    rank: '亞軍',
+    awardDate: '2021-01-01',
+    organizer: '宜蘭縣足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校國小 13 歲組足球隊',
+    storageNote: '民國110年獲頒（銘牌未標註月日，暫以110年元旦建檔）· 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1100000________13_____7868adf9.jpg',
+    createdAt: '2021-01-01T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1100000-u10',
+    accessionNumber: 'ACC-2021-001',
+    category: 'trophy',
+    awardName: '110年宜蘭市市長盃足球錦標賽-足球競賽 盃賽 U10',
+    rank: '亞軍',
+    awardDate: '2021-01-01',
+    organizer: '宜蘭市公所、宜蘭市體育會（宜蘭市長 江聰淵、宜蘭市體育會理事長 林智勇）',
+    recipient: '本校 U10 足球隊',
+    storageNote: '民國110年獲頒（銘牌未標註月日，暫以110年元旦建檔）· 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1100000___________U10___5d614097.jpg',
+    createdAt: '2021-01-01T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1091025',
+    accessionNumber: 'ACC-2020-008',
+    category: 'trophy',
+    awardName: '109年宜蘭縣學童盃足球錦標賽 12歲組',
+    rank: '殿軍',
+    awardDate: '2020-10-25',
+    organizer: '宜蘭縣足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校 12 歲組足球隊',
+    storageNote: '民國109年10月25日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1091025______12_____29828b33.jpg',
+    createdAt: '2020-10-25T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1090920',
+    accessionNumber: 'ACC-2020-007',
+    category: 'trophy',
+    awardName: '109年宜蘭縣主委盃足球錦標賽 國小12歲組',
+    rank: '冠軍',
+    awardDate: '2020-09-20',
+    organizer: '宜蘭縣足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校國小 12 歲組足球隊',
+    storageNote: '民國109年9月20日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1090920________12_____9fd1427d.jpg',
+    createdAt: '2020-09-20T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1090816-u10',
+    accessionNumber: 'ACC-2020-006',
+    category: 'trophy',
+    awardName: '109年第一屆宜蘭縣葛瑪蘭盃全國足球邀請賽 國小U10組 銀盤賽',
+    rank: '亞軍',
+    awardDate: '2020-08-16',
+    organizer: '宜蘭縣政府、宜蘭縣議員服務處（宜蘭縣縣長 林姿妙、宜蘭縣議員 林岳賢 贈）',
+    recipient: '本校國小 U10 足球隊',
+    storageNote: '民國109年8月16日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1090816___________________U10______953ec778.jpg',
+    createdAt: '2020-08-16T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1090816-u8',
+    accessionNumber: 'ACC-2020-005',
+    category: 'trophy',
+    awardName: '109年第一屆宜蘭縣葛瑪蘭盃全國足球邀請賽 國小U8組 銀盤賽',
+    rank: '冠軍',
+    awardDate: '2020-08-16',
+    organizer: '宜蘭縣政府、宜蘭縣議員服務處（宜蘭縣縣長 林姿妙、宜蘭縣議員 林岳賢 贈）',
+    recipient: '本校國小 U8 足球隊',
+    storageNote: '民國109年8月16日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1090816____________U8_____0e9044b7.jpg',
+    createdAt: '2020-08-16T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1090329-u13',
+    accessionNumber: 'ACC-2020-004',
+    category: 'trophy',
+    awardName: '109年宜蘭市市長盃足球錦標賽 國小U13歲 金盃賽',
+    rank: '亞軍',
+    awardDate: '2020-03-29',
+    organizer: '宜蘭市公所、宜蘭市體育會（宜蘭市市長 江聰淵、宜蘭市體育會理事長 林智勇 贈）',
+    recipient: '本校國小 U13 足球隊',
+    storageNote: '民國109年3月28日至29日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1090329_____________U13_______4f3dbba5.jpg',
+    createdAt: '2020-03-29T09:10:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1090329-u11',
+    accessionNumber: 'ACC-2020-003',
+    category: 'trophy',
+    awardName: '109年宜蘭市市長盃足球錦標賽 國小U11歲 金盤賽',
+    rank: '冠軍',
+    awardDate: '2020-03-29',
+    organizer: '宜蘭市公所、宜蘭市體育會（宜蘭市市長 江聰淵、宜蘭市體育會理事長 林智勇 贈）',
+    recipient: '本校國小 U11 足球隊',
+    storageNote: '民國109年3月28日至29日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1090329_____________U11_______b8c2d62d.jpg',
+    createdAt: '2020-03-29T09:05:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-1090329',
+    accessionNumber: 'ACC-2020-002',
+    category: 'trophy',
+    awardName: '109年宜蘭市市長盃足球錦標賽 國小U9歲 金盤賽',
+    rank: '冠軍',
+    awardDate: '2020-03-29',
+    organizer: '宜蘭市公所、宜蘭市體育會（宜蘭市市長 江聰淵、宜蘭市體育會理事長 林智勇 贈）',
+    recipient: '本校國小 U9 足球隊',
+    storageNote: '民國109年3月28日至29日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1090329_____________U9_______8a34a052.jpg',
+    createdAt: '2020-03-29T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1090307',
+    accessionNumber: 'ACC-2020-001',
+    category: 'trophy',
+    awardName: '109年羅東鎮鎮長盃足球錦標賽 U9組',
+    rank: '殿軍',
+    awardDate: '2020-03-07',
+    organizer: '羅東鎮公所（羅東鎮長 吳秋齡 贈）',
+    recipient: '本校 U9 足球隊',
+    storageNote: '民國109年3月7日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1090307___________U9____c8605620.jpg',
+    createdAt: '2020-03-07T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1081228',
+    accessionNumber: 'ACC-2019-007',
+    category: 'trophy',
+    awardName: 'COMSPORT 熊兄弟盃 8歲組-銀盃賽',
+    rank: '第二名',
+    awardDate: '2019-12-28',
+    organizer: 'COMSPORT × 熊兄弟體能工作室 贈',
+    recipient: '本校 8 歲組足球隊',
+    storageNote: '民國108年12月28日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1081228COMSPORT____8_________c0b4f510.jpg',
+    createdAt: '2019-12-28T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1081103',
+    accessionNumber: 'ACC-2019-006',
+    category: 'trophy',
+    awardName: '108年宜蘭縣學童盃足球錦標賽 國小男生12歲組',
+    rank: '亞軍',
+    awardDate: '2019-11-03',
+    organizer: '國立宜蘭高中（校長 張以方 敬贈）',
+    recipient: '本校國小男生12歲組足球隊',
+    storageNote: '民國108年11月3日獲頒（銘牌刻字為國小男生12歲組）· 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1081103______13_____3e00fcd3.jpg',
+    createdAt: '2019-11-03T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1080615',
+    accessionNumber: 'ACC-2019-005',
+    category: 'trophy',
+    awardName: '108年宜蘭縣主委盃足球錦標賽 國小男生11歲組',
+    rank: '亞軍',
+    awardDate: '2019-06-15',
+    organizer: '宜蘭縣足球委員會（主任委員 方錦龍 敬贈）',
+    recipient: '本校國小男生11歲組足球隊',
+    storageNote: '民國108年6月15日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1080615_______________11_____b420b27c.jpg',
+    createdAt: '2019-06-15T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1080520',
+    accessionNumber: 'ACC-2019-004',
+    category: 'trophy',
+    awardName: '107學年度宜蘭縣中小學足球錦標賽 甲組',
+    rank: '殿軍',
+    awardDate: '2019-05-20',
+    organizer: '宜蘭縣政府（縣長 林姿妙 敬贈）',
+    recipient: '本校甲組足球隊',
+    storageNote: '民國108年5月20日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1080520________________d6f34e06.jpg',
+    createdAt: '2019-05-20T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1080420-double',
+    accessionNumber: 'ACC-2019-003',
+    category: 'trophy',
+    awardName: '108年宜蘭縣龍獅盃技藝錦標賽 醒獅 雙獅國小組',
+    rank: '第二名',
+    awardDate: '2019-04-20',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（縣長 林姿妙、主任委員 蔡時魁 贈）',
+    recipient: '本校醒獅團雙獅國小組',
+    storageNote: '民國108年4月20日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1080420______________________27bbf97d.jpg',
+    createdAt: '2019-04-20T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1080420-single',
+    accessionNumber: 'ACC-2019-002',
+    category: 'trophy',
+    awardName: '108年宜蘭縣龍獅盃技藝錦標賽 醒獅 單獅國小組',
+    rank: '第一名',
+    awardDate: '2019-04-20',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（縣長 林姿妙、主任委員 蔡時魁 贈）',
+    recipient: '本校醒獅團單獅國小組',
+    storageNote: '民國108年4月20日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1080420______________________d91f8c43.jpg',
+    createdAt: '2019-04-20T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1080224',
+    accessionNumber: 'ACC-2019-001',
+    category: 'trophy',
+    awardName: '108年羅東鎮鎮長盃足球錦標賽 U8組',
+    rank: '亞軍',
+    awardDate: '2019-02-24',
+    organizer: '羅東鎮公所（羅東鎮長 吳秋齡 贈）',
+    recipient: '本校 U8 足球隊',
+    storageNote: '民國108年2月24日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1080224___________U8____95078cc6.jpg',
+    createdAt: '2019-02-24T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1071024',
+    accessionNumber: 'ACC-2018-007',
+    category: 'trophy',
+    awardName: '107年宜蘭縣學童盃足球錦標賽 10歲組',
+    rank: '亞軍',
+    awardDate: '2018-10-24',
+    organizer: '國立宜蘭高中（校長 王垠 贈）',
+    recipient: '本校 10 歲組足球隊',
+    storageNote: '民國107年10月24日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1071024___________10_____a8b64fa1.jpg',
+    createdAt: '2018-10-24T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1070803',
+    accessionNumber: 'ACC-2018-006',
+    category: 'trophy',
+    awardName: '107年宜蘭縣假期盃國小足球錦標賽 10歲組',
+    rank: '殿軍',
+    awardDate: '2018-08-03',
+    organizer: '宜蘭縣足球委員會（主任委員 方錦龍 贈）',
+    recipient: '本校 10 歲組足球隊',
+    storageNote: '民國107年8月3日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1070803___________10_____426e2604.jpg',
+    createdAt: '2018-08-03T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1070610',
+    accessionNumber: 'ACC-2018-005',
+    category: 'trophy',
+    awardName: '107年宜蘭縣體育會運動i臺灣計畫 團體及綜合性體育展演活動趣味競賽「獅祖也瘋狂」',
+    rank: '第一名',
+    awardDate: '2018-06-10',
+    organizer: '宜蘭縣體育會（理事長 蔡岡志、龍獅主任委員 蔡時魁 敬贈）',
+    recipient: '本校龍獅隊',
+    storageNote: '民國107年6月10日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1070610_____________8e178780.jpg',
+    createdAt: '2018-06-10T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1070604',
+    accessionNumber: 'ACC-2018-004',
+    category: 'trophy',
+    awardName: '107年宜蘭縣主委盃足球錦標賽 國小組U11歲組',
+    rank: '亞軍',
+    awardDate: '2018-06-04',
+    organizer: '宜蘭縣足球委員會（主任委員 方錦龍 敬贈）',
+    recipient: '本校國小組 U11 足球隊',
+    storageNote: '民國107年6月4日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1070604_____________U11_____85024b74.jpg',
+    createdAt: '2018-06-04T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1070521-jia',
+    accessionNumber: 'ACC-2018-003',
+    category: 'trophy',
+    awardName: '106學年度宜蘭縣中小學運動會足球比賽 國小甲組',
+    rank: '殿軍',
+    awardDate: '2018-05-21',
+    organizer: '宜蘭縣政府（代理縣長 陳金德 敬贈）',
+    recipient: '本校國小甲組足球隊',
+    storageNote: '民國107年5月21日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1070521_____________________8d3cf7b5.jpg',
+    createdAt: '2018-05-21T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1070521-yi',
+    accessionNumber: 'ACC-2018-002',
+    category: 'trophy',
+    awardName: '106學年度宜蘭縣中小學運動會足球比賽 國小乙組',
+    rank: '冠軍',
+    awardDate: '2018-05-21',
+    organizer: '宜蘭縣政府（代理縣長 陳金德 敬贈）',
+    recipient: '本校國小乙組足球隊',
+    storageNote: '民國107年5月21日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1070521____________________aa00b8f8.jpg',
+    createdAt: '2018-05-21T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1070408',
+    accessionNumber: 'ACC-2018-001',
+    category: 'trophy',
+    awardName: '2018全國少年盃足球錦標賽（東區） U11歲學校組男生',
+    rank: '殿軍',
+    awardDate: '2018-04-08',
+    organizer: '中華民國足球協會（理事長 林湧成 敬贈）',
+    recipient: '本校 U11 學校組男生足球隊',
+    storageNote: '民國107年4月8日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1070408____________U11_______166c62b3.jpg',
+    createdAt: '2018-04-08T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1061029-boys',
+    accessionNumber: 'ACC-2017-011',
+    category: 'trophy',
+    awardName: '員山鄉體育會106年鄉長盃三對三籃球賽 國小男生組',
+    rank: '季軍',
+    awardDate: '2017-10-29',
+    organizer: '員山鄉體育會、員山鄉公所（員山鄉長 江永和 贈）',
+    recipient: '本校國小男生組籃球隊',
+    storageNote: '民國106年10月29日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1061029_________________13ab35e3.jpg',
+    createdAt: '2017-10-29T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1061029-girls',
+    accessionNumber: 'ACC-2017-010',
+    category: 'trophy',
+    awardName: '員山鄉體育會106年鄉長盃三對三籃球賽 國小女生組',
+    rank: '季軍',
+    awardDate: '2017-10-29',
+    organizer: '員山鄉體育會、員山鄉公所（員山鄉長 江永和 贈）',
+    recipient: '本校國小女生組籃球隊',
+    storageNote: '民國106年10月29日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1061029_________________527543d6.jpg',
+    createdAt: '2017-10-29T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1060811',
+    accessionNumber: 'ACC-2017-009',
+    category: 'trophy',
+    awardName: '106年宜蘭縣假期盃足球錦標賽 國小中年級組',
+    rank: '冠軍',
+    awardDate: '2017-08-11',
+    organizer: '宜蘭縣足球委員會（主任委員 林湧成 敬贈）',
+    recipient: '本校國小中年級足球隊',
+    storageNote: '民國106年8月11日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1060811____________________26174a68.jpg',
+    createdAt: '2017-08-11T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1060527',
+    accessionNumber: 'ACC-2017-008',
+    category: 'trophy',
+    awardName: '教育部體育署105學年度第八屆全國中小學生普及化運動樂樂足球宜蘭縣決賽 五年級組',
+    rank: '亞軍',
+    awardDate: '2017-05-27',
+    organizer: '宜蘭縣政府（代理縣長 吳澤成 敬贈）',
+    recipient: '本校五年級樂樂足球隊',
+    storageNote: '民國106年5月26日至27日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1060527___________________ed696a16.jpg',
+    createdAt: '2017-05-27T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1060522',
+    accessionNumber: 'ACC-2017-007',
+    category: 'trophy',
+    awardName: '105學年度宜蘭縣中小學運動會足球比賽 國小甲組',
+    rank: '殿軍',
+    awardDate: '2017-05-22',
+    organizer: '宜蘭縣政府（代理縣長 吳澤成 敬贈）',
+    recipient: '本校國小甲組足球隊',
+    storageNote: '民國106年5月22日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1060522____________________dfc1d334.jpg',
+    createdAt: '2017-05-22T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1060410',
+    accessionNumber: 'ACC-2017-006',
+    category: 'trophy',
+    awardName: '106年宜蘭縣主委盃足球錦標賽 國小低年級組',
+    rank: '冠軍',
+    awardDate: '2017-04-10',
+    organizer: '宜蘭縣足球委員會（主任委員 林湧成 敬贈）',
+    recipient: '本校國小低年級足球隊',
+    storageNote: '民國106年4月10日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1060410____________________33e7163a.jpg',
+    createdAt: '2017-04-10T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1060408-single',
+    accessionNumber: 'ACC-2017-005',
+    category: 'trophy',
+    awardName: '106年宜蘭縣龍獅盃技藝錦標賽 醒獅國小組單獅',
+    rank: '第一名',
+    awardDate: '2017-04-08',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（代理縣長 吳澤成、主任委員 蔡時魁 敬贈）',
+    recipient: '本校醒獅團單獅國小組',
+    storageNote: '民國106年4月8日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1060408______________________b1bd913d.jpg',
+    createdAt: '2017-04-08T09:10:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1060408-girls',
+    accessionNumber: 'ACC-2017-004',
+    category: 'trophy',
+    awardName: '106年宜蘭縣龍獅盃技藝錦標賽 醒獅國小女子組',
+    rank: '第一名',
+    awardDate: '2017-04-08',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（代理縣長 吳澤成、主任委員 蔡時魁 敬贈）',
+    recipient: '本校醒獅團國小女子組',
+    storageNote: '民國106年4月8日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1060408______________________fad4bf0e.jpg',
+    createdAt: '2017-04-08T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1060408-multi',
+    accessionNumber: 'ACC-2017-003',
+    category: 'trophy',
+    awardName: '106年宜蘭縣龍獅盃技藝錦標賽 醒獅國小組多獅',
+    rank: '第一名',
+    awardDate: '2017-04-08',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（代理縣長 吳澤成、主任委員 蔡時魁 敬贈）',
+    recipient: '本校醒獅團多獅國小組',
+    storageNote: '民國106年4月8日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1060408______________________94cd59d7.jpg',
+    createdAt: '2017-04-08T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1060208-high',
+    accessionNumber: 'ACC-2017-002',
+    category: 'trophy',
+    awardName: '106年宜蘭縣少年盃足球錦標賽 高年級組',
+    rank: '殿軍',
+    awardDate: '2017-02-08',
+    organizer: '宜蘭縣足球委員會（主任委員 林湧成 敬贈）',
+    recipient: '本校高年級足球隊',
+    storageNote: '民國106年2月8日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1060208__________________7c17614a.jpg',
+    createdAt: '2017-02-08T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1060208-mid',
+    accessionNumber: 'ACC-2017-001',
+    category: 'trophy',
+    awardName: '106年宜蘭縣少年盃足球錦標賽 中年級組',
+    rank: '殿軍',
+    awardDate: '2017-02-08',
+    organizer: '宜蘭縣足球委員會（主任委員 林湧成 敬贈）',
+    recipient: '本校中年級足球隊',
+    storageNote: '民國106年2月8日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1060208__________________15779b10.jpg',
+    createdAt: '2017-02-08T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1050826-high',
+    accessionNumber: 'ACC-2016-008',
+    category: 'trophy',
+    awardName: '105年宜蘭縣假期盃國小足球錦標賽 高年級組',
+    rank: '殿軍',
+    awardDate: '2016-08-26',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 敬贈）',
+    recipient: '本校高年級足球隊',
+    storageNote: '民國105年8月26日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1050826____________________fea769c1.jpg',
+    createdAt: '2016-08-26T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:53:00.000Z',
+  },
+  {
+    id: 'trophy-1050826',
+    accessionNumber: 'ACC-2016-007',
+    category: 'trophy',
+    awardName: '105年宜蘭縣假期盃國小足球錦標賽 中年級組',
+    rank: '季軍',
+    awardDate: '2016-08-26',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 敬贈）',
+    recipient: '本校中年級足球隊',
+    storageNote: '民國105年8月26日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1050826____________________47080b04.jpg',
+    createdAt: '2016-08-26T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1050605-high',
+    accessionNumber: 'ACC-2016-006',
+    category: 'trophy',
+    awardName: '105年宜蘭縣主委盃足球錦標賽國小組 高年級組',
+    rank: '冠軍',
+    awardDate: '2016-06-05',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 敬贈）',
+    recipient: '本校高年級足球隊',
+    storageNote: '民國105年6月5日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1050605____________________9e96d9d2.jpg',
+    createdAt: '2016-06-05T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1050605-mid',
+    accessionNumber: 'ACC-2016-005',
+    category: 'trophy',
+    awardName: '105年宜蘭縣主委盃足球錦標賽國小組 中年級組',
+    rank: '季軍',
+    awardDate: '2016-06-05',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 敬贈）',
+    recipient: '本校中年級足球隊',
+    storageNote: '民國105年6月5日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1050605____________________c0fd32a2.jpg',
+    createdAt: '2016-06-05T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1050516',
+    accessionNumber: 'ACC-2016-004',
+    category: 'trophy',
+    awardName: '104學年度宜蘭縣中小學運動會足球錦標賽 甲組',
+    rank: '亞軍',
+    awardDate: '2016-05-16',
+    organizer: '宜蘭縣政府（縣長 林聰賢 敬贈）',
+    recipient: '本校甲組足球隊',
+    storageNote: '民國105年5月16日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1050516_____________________0388b4b3.jpg',
+    createdAt: '2016-05-16T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1050327',
+    accessionNumber: 'ACC-2016-003',
+    category: 'trophy',
+    awardName: '105全國少年盃足球錦標賽分區賽（東區） U13歲學校組男生',
+    rank: '殿軍',
+    awardDate: '2016-03-27',
+    organizer: '中華民國足球協會（理事長 林振義 敬贈）',
+    recipient: '本校 U13 學校組男生足球隊',
+    storageNote: '民國105年3月27日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1050327____________U13_______9cbd7d19.jpg',
+    createdAt: '2016-03-27T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1050125',
+    accessionNumber: 'ACC-2016-002',
+    category: 'trophy',
+    awardName: '105年宜蘭縣少年盃足球錦標賽 高年級組',
+    rank: '亞軍',
+    awardDate: '2016-01-25',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 敬贈）',
+    recipient: '本校高年級足球隊',
+    storageNote: '民國105年1月25日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1050125____________________be1ad99a.jpg',
+    createdAt: '2016-01-25T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1050120',
+    accessionNumber: 'ACC-2016-001',
+    category: 'trophy',
+    awardName: '105年宜蘭縣少年盃足球錦標賽 中年級組',
+    rank: '冠軍',
+    awardDate: '2016-01-20',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 敬贈）',
+    recipient: '本校中年級足球隊',
+    storageNote: '民國105年1月20日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1050120____________________84798161.jpg',
+    createdAt: '2016-01-20T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1041206',
+    accessionNumber: 'ACC-2015-007',
+    category: 'trophy',
+    awardName: '104年宜蘭縣學童盃足球錦標賽 高年級組',
+    rank: '季軍',
+    awardDate: '2015-12-06',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 敬贈）',
+    recipient: '本校高年級足球隊',
+    storageNote: '民國104年12月6日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1041206__________________7ae75bf7.jpg',
+    createdAt: '2015-12-06T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1040610-high',
+    accessionNumber: 'ACC-2015-006',
+    category: 'trophy',
+    awardName: '104年宜蘭縣主委盃足球錦標賽 國小高年級組',
+    rank: '冠軍',
+    awardDate: '2015-06-10',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 贈）',
+    recipient: '本校國小高年級足球隊',
+    storageNote: '民國104年6月10日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1040610____________________1753ed6b.jpg',
+    createdAt: '2015-06-10T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1040610-mid',
+    accessionNumber: 'ACC-2015-005',
+    category: 'trophy',
+    awardName: '104年宜蘭縣主委盃足球錦標賽 國小中年級組',
+    rank: '亞軍',
+    awardDate: '2015-06-10',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 贈）',
+    recipient: '本校國小中年級足球隊',
+    storageNote: '民國104年6月10日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1040610____________________f98f02ad.jpg',
+    createdAt: '2015-06-10T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1040531',
+    accessionNumber: 'ACC-2015-004',
+    category: 'trophy',
+    awardName: '104年宜蘭縣中小學足球錦標賽 國小甲組',
+    rank: '亞軍',
+    awardDate: '2015-05-31',
+    organizer: '宜蘭縣政府（縣長 林聰賢 敬贈）',
+    recipient: '本校國小甲組足球隊',
+    storageNote: '民國104年5月31日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1040531__________________36026981.jpg',
+    createdAt: '2015-05-31T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1040412',
+    accessionNumber: 'ACC-2015-003',
+    category: 'trophy',
+    awardName: '104年宜蘭縣鼓藝運動技藝錦標賽 獅鼓運動國小組',
+    rank: '第三名',
+    awardDate: '2015-04-12',
+    organizer: '宜蘭縣鼓藝運動技藝錦標賽籌備會（宜蘭縣長 林聰賢、主任委員 蔡時焜 敬贈）',
+    recipient: '本校獅鼓隊國小組',
+    storageNote: '民國104年4月12日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1040412_______________________6d7e19ee.jpg',
+    createdAt: '2015-04-12T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:28:00.000Z',
+  },
+  {
+    id: 'trophy-1040411',
+    accessionNumber: 'ACC-2015-002',
+    category: 'trophy',
+    awardName: '104年宜蘭縣龍獅盃技藝錦標賽 醒獅國小組單獅',
+    rank: '第一名',
+    awardDate: '2015-04-11',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（宜蘭縣長 林聰賢、主任委員 蔡時焜 敬贈）',
+    recipient: '本校醒獅團國小組',
+    storageNote: '民國104年4月11日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1040411______________________31991e8a.jpg',
+    createdAt: '2015-04-11T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1040214',
+    accessionNumber: 'ACC-2015-001',
+    category: 'trophy',
+    awardName: '104年宜蘭縣少年盃足球錦標賽 高年級組',
+    rank: '亞軍',
+    awardDate: '2015-02-14',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 敬贈）',
+    recipient: '本校高年級足球隊',
+    storageNote: '民國104年2月14日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1040214__________________d39eee3d.jpg',
+    createdAt: '2015-02-14T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1030607',
+    accessionNumber: 'ACC-2014-006',
+    category: 'trophy',
+    awardName: '103年宜蘭縣主委盃足球錦標賽 國小高年級組',
+    rank: '殿軍',
+    awardDate: '2014-06-07',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 贈）',
+    recipient: '本校國小高年級足球隊',
+    storageNote: '民國103年6月7日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1030607____________________5466501b.jpg',
+    createdAt: '2014-06-07T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1030521',
+    accessionNumber: 'ACC-2014-004',
+    category: 'trophy',
+    awardName: '宜蘭縣103年小學足球錦標賽 乙組',
+    rank: '冠軍',
+    awardDate: '2014-05-21',
+    organizer: '宜蘭縣政府（縣長 林聰賢 敬贈）',
+    recipient: '本校小學乙組足球隊',
+    storageNote: '民國103年5月21日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1030521_______________033a5a7e.jpg',
+    createdAt: '2014-05-21T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1030515',
+    accessionNumber: 'ACC-2014-005',
+    category: 'trophy',
+    awardName: '教育部體育署102學年度第五屆全國國民小學樂樂足球錦標賽 全國北區決賽 六年級',
+    rank: '亞軍',
+    awardDate: '2014-05-15',
+    organizer: '教育部體育署（署長 何卓飛 贈）',
+    recipient: '本校六年級樂樂足球隊',
+    storageNote: '民國103年5月15日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1030515_________________62fb6de3.jpg',
+    createdAt: '2014-05-15T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1030325-g6',
+    accessionNumber: 'ACC-2014-002',
+    category: 'trophy',
+    awardName: '102學年度教育部體育署第五屆全國國民小學樂樂足球宜蘭縣複賽 六年級組',
+    rank: '冠軍',
+    awardDate: '2014-03-25',
+    organizer: '宜蘭縣政府（縣長 林聰賢 敬贈）',
+    recipient: '本校六年級樂樂足球隊',
+    storageNote: '民國103年3月25日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1030325___________________08a7fd0c.jpg',
+    createdAt: '2014-03-25T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1030325-g4',
+    accessionNumber: 'ACC-2014-003',
+    category: 'trophy',
+    awardName: '102學年度教育部體育署第五屆全國國民小學樂樂足球宜蘭縣複賽 四年級組',
+    rank: '冠軍',
+    awardDate: '2014-03-25',
+    organizer: '宜蘭縣政府（縣長 林聰賢 敬贈）',
+    recipient: '本校四年級樂樂足球隊',
+    storageNote: '民國103年3月25日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1030325___________________10889d68.jpg',
+    createdAt: '2014-03-25T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1030228',
+    accessionNumber: 'ACC-2014-001',
+    category: 'trophy',
+    awardName: '103年宜蘭縣中小學運動會 女童乙組 徑賽錦標',
+    rank: '第四名',
+    awardDate: '2014-02-28',
+    organizer: '宜蘭縣政府（縣長 林聰賢 贈）',
+    recipient: '本校女童乙組田徑隊',
+    storageNote: '民國103年2月28日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1030228_____________________e4fc0d13.jpg',
+    createdAt: '2014-02-28T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1021120',
+    accessionNumber: 'ACC-2013-005',
+    category: 'trophy',
+    awardName: '102年學童盃足球聯賽 12歲組',
+    rank: '亞軍',
+    awardDate: '2013-11-20',
+    organizer: '宜蘭縣足球委員會（主任委員 林振義 贈）',
+    recipient: '本校 12 歲組足球隊',
+    storageNote: '民國102年11月20日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1021120__________12_____d878c440.jpg',
+    createdAt: '2013-11-20T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1020505',
+    accessionNumber: 'ACC-2013-004',
+    category: 'trophy',
+    awardName: '2013年 TYL全國少年春季足球聯賽 U10 東區組',
+    rank: '季軍',
+    awardDate: '2013-05-05',
+    organizer: '中華民國足球協會（理事長 盧崑山 贈）',
+    recipient: '本校 U10 足球隊',
+    storageNote: '民國102年5月5日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1020505TYL__________U10______62af8f32.jpg',
+    createdAt: '2013-05-05T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1020501-u10',
+    accessionNumber: 'ACC-2013-002',
+    category: 'trophy',
+    awardName: '2013年 TYL全國少年春季足球聯賽 U10 東A二組',
+    rank: '冠軍',
+    awardDate: '2013-05-01',
+    organizer: '中華民國足球協會（理事長 盧崑山 贈）',
+    recipient: '本校 U10 東A二組足球隊',
+    storageNote: '民國102年5月1日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1020501TYL__________U10_A_____63718b92.jpg',
+    createdAt: '2013-05-01T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1020501-u12',
+    accessionNumber: 'ACC-2013-003',
+    category: 'trophy',
+    awardName: '2013年 TYL全國少年春季足球聯賽 U12 東A二組',
+    rank: '亞軍',
+    awardDate: '2013-05-01',
+    organizer: '中華民國足球協會（理事長 盧崑山 贈）',
+    recipient: '本校 U12 東A二組足球隊',
+    storageNote: '民國102年5月1日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1020501TYL__________U12_A_____0463687a.jpg',
+    createdAt: '2013-05-01T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1020402',
+    accessionNumber: 'ACC-2013-001',
+    category: 'trophy',
+    awardName: '宜蘭縣102年中小學足球錦標賽 乙組',
+    rank: '冠軍',
+    awardDate: '2013-04-02',
+    organizer: '宜蘭縣政府（縣長 林聰賢 敬贈）',
+    recipient: '本校乙組足球隊',
+    storageNote: '民國102年4月2日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1020402________________6a713de5.jpg',
+    createdAt: '2013-04-02T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1011209',
+    accessionNumber: 'ACC-2012-002',
+    category: 'trophy',
+    awardName: '2012 TYL少年秋季足球聯賽 12歲 東三組',
+    rank: '冠軍',
+    awardDate: '2012-12-09',
+    organizer: '中華民國足球協會（理事長 盧崑山 贈）',
+    recipient: '本校 12 歲組足球隊',
+    storageNote: '民國101年12月9日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1011209TYL__________12_______963b1903.jpg',
+    createdAt: '2012-12-09T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1010801',
+    accessionNumber: 'ACC-2012-001',
+    category: 'trophy',
+    awardName: '2012年宜蘭七賢盃五人制足球賽 11歲組',
+    rank: '第五名',
+    awardDate: '2012-08-01',
+    organizer: '宜蘭縣七賢國小（校長 郭添枝 贈）',
+    recipient: '本校 11 歲組五人制足球隊',
+    storageNote: '2012年8月1日（民國101年）獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1010801___________11______6e060d74.jpg',
+    createdAt: '2012-08-01T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:24:00.000Z',
+  },
+  {
+    id: 'trophy-1000416',
+    accessionNumber: 'ACC-2011-001',
+    category: 'trophy',
+    awardName: '100年宜蘭縣龍獅盃技藝錦標賽 醒獅國小女子組',
+    rank: '第一名',
+    awardDate: '2011-04-16',
+    organizer: '宜蘭縣龍獅盃技藝錦標賽籌備會（宜蘭縣長 林聰賢 等敬贈）',
+    recipient: '本校醒獅團國小女子組',
+    storageNote: '民國100年4月16日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/1000416______________________f06734a4.jpg',
+    createdAt: '2011-04-16T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:18:00.000Z',
+  },
+  {
+    id: 'trophy-980823',
+    accessionNumber: 'ACC-2009-003',
+    category: 'trophy',
+    awardName: '98年宜蘭縣府盃五人制足球錦標賽 國小男生甲組',
+    rank: '冠軍',
+    awardDate: '2009-08-23',
+    organizer: '宜蘭縣政府（縣長 呂國華 贈）',
+    recipient: '本校國小男生甲組足球隊',
+    storageNote: '民國98年8月23日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/980823______________________bb14437e.jpg',
+    createdAt: '2009-08-23T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:18:00.000Z',
+  },
+  {
+    id: 'trophy-980322',
+    accessionNumber: 'ACC-2009-002',
+    category: 'trophy',
+    awardName: '九十八年宜蘭縣中小學足球錦標賽 國小甲組',
+    rank: '冠軍',
+    awardDate: '2009-03-22',
+    organizer: '宜蘭縣政府（縣長 呂國華 敬贈）',
+    recipient: '本校國小甲組足球隊',
+    storageNote: '民國98年3月22日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/980322__________________157fea97.jpg',
+    createdAt: '2009-03-22T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:18:00.000Z',
+  },
+  {
+    id: 'trophy-980222',
+    accessionNumber: 'ACC-2009-001',
+    category: 'trophy',
+    awardName: '98年宜蘭縣獅子盃五人制足球錦標賽 國小男生乙組',
+    rank: '冠軍',
+    awardDate: '2009-02-22',
+    organizer: '國際獅子會300F區第二專區（主席 莊清萬 贈）',
+    recipient: '本校國小男生乙組足球隊',
+    storageNote: '民國98年2月22日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/980222_______________________acd5d02f.jpg',
+    createdAt: '2009-02-22T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:18:00.000Z',
+  },
+  {
+    id: 'trophy-creative-cooking',
+    accessionNumber: 'ACC-2008-001',
+    category: 'trophy',
+    awardName: '參加公廣集團「校園十一ㄨ廚」節目 創意料理競賽',
+    rank: '表現優異',
+    awardDate: '2008-01-01',
+    organizer: '教育部',
+    recipient: '本校創意料理競賽代表隊',
+    storageNote: '獲頒年份待考（銘牌未標註日期，暫以2008年元旦建檔，可編輯補登）· 已完成去背建檔',
+    imageUrl: '/assets/aistudio/___________________c283fb78.jpg',
+    createdAt: '2008-01-01T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-951230-league',
+    accessionNumber: 'ACC-2006-001',
+    category: 'trophy',
+    awardName: '95年宜蘭縣國小足球聯賽 甲組',
+    rank: '冠軍',
+    awardDate: '2006-12-30',
+    organizer: '宜蘭縣政府（縣長 呂國華 贈）',
+    recipient: '本校國小甲組足球隊',
+    storageNote: '民國95年12月30日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/951230______________74d35153.jpg',
+    createdAt: '2006-12-30T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:18:00.000Z',
+  },
+  {
+    id: 'trophy-951230-gedajiang',
+    accessionNumber: 'ACC-2006-002',
+    category: 'trophy',
+    awardName: '九十五年度葛大將盃五人制足球邀請賽',
+    rank: '亞軍',
+    awardDate: '2006-12-30',
+    organizer: '葛大將盃五人制足球邀請賽大會',
+    recipient: '本校五人制足球隊',
+    storageNote: '民國95年12月30日獲頒（木臼造型紀念獎盃）· 已完成去背建檔',
+    imageUrl: '/assets/aistudio/951230_______________6a84b300.jpg',
+    createdAt: '2006-12-30T09:05:00.000Z',
+    updatedAt: '2026-11-26T19:18:00.000Z',
+  },
+  {
+    id: 'trophy-890414',
+    accessionNumber: 'ACC-2000-001',
+    category: 'trophy',
+    awardName: '宜蘭縣八十九年度中小學足球錦標賽 國小男生乙組',
+    rank: '亞軍',
+    awardDate: '2000-04-14',
+    organizer: '宜蘭縣政府（縣長 劉守成 贈）',
+    recipient: '本校國小男生乙組足球隊',
+    storageNote: '民國89年4月14日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/890414____________________1c1d79e8.jpg',
+    createdAt: '2000-04-14T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:18:00.000Z',
+  },
+  {
+    id: 'trophy-81-sports-day',
+    accessionNumber: 'ACC-1992-001',
+    category: 'trophy',
+    awardName: '七賢國小八十一年度運動會紀念',
+    rank: '冠軍',
+    awardDate: '1992-01-01',
+    organizer: '宜蘭縣政府（縣長 游錫堃 敬贈）',
+    recipient: '本校運動會代表隊',
+    storageNote: '民國81年度（1992年）獲頒，銘牌未標註確切月日 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/____81__________98426ff3.jpg',
+    createdAt: '1992-01-01T09:00:00.000Z',
+    updatedAt: '2026-11-26T20:00:00.000Z',
+  },
+  {
+    id: 'trophy-750618',
+    accessionNumber: 'ACC-1986-001',
+    category: 'trophy',
+    awardName: '宜蘭縣七十四學年度國民小學足球錦標賽 男生組',
+    rank: '冠軍',
+    awardDate: '1986-06-18',
+    organizer: '宜蘭縣政府（縣長 陳定南 贈）',
+    recipient: '本校國小男生足球隊',
+    storageNote: '民國75年6月18日獲頒 · 已完成去背建檔',
+    imageUrl: '/assets/aistudio/750618__________________9b7412f1.jpg',
+    createdAt: '1986-06-18T09:00:00.000Z',
+    updatedAt: '2026-11-26T19:18:00.000Z',
+  },
+];
+
+function ensureStorageReady(): void {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(AWARDS_FILE)) {
+    writeAwardsAtomically(SEED_AWARDS);
+  }
+}
+
+function writeAwardsAtomically(awards: AwardRecord[]): void {
+  const tempPath = `${AWARDS_FILE}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(awards, null, 2), 'utf8');
+  fs.renameSync(tempPath, AWARDS_FILE);
+}
+
+function readAwards(): AwardRecord[] {
+  ensureStorageReady();
+  try {
+    const raw = fs.readFileSync(AWARDS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed as AwardRecord[];
+    }
+    return SEED_AWARDS;
+  } catch {
+    return SEED_AWARDS;
+  }
+}
+
+function saveBase64Image(dataUrl: string): string | null {
+  const match = dataUrl.match(/^data:image\/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) {
+    return null;
+  }
+  const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+  const buffer = Buffer.from(match[2], 'base64');
+  if (buffer.length > 10 * 1024 * 1024) {
+    throw new Error('影像檔案過大，請控制在 10MB 以內');
+  }
+  const filename = `award_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  const targetPath = path.join(UPLOADS_DIR, filename);
+  fs.writeFileSync(targetPath, buffer);
+  return `/api/uploads/${filename}`;
+}
+
+function deleteUploadedFileIfLocal(imageUrl: string): void {
+  if (!imageUrl.startsWith('/api/uploads/')) {
+    return;
+  }
+  const safeName = path.basename(imageUrl);
+  const fullPath = path.join(UPLOADS_DIR, safeName);
+  if (fs.existsSync(fullPath)) {
+    try {
+      fs.unlinkSync(fullPath);
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
+
+function generateAccessionNumber(existing: AwardRecord[], awardDate: string): string {
+  const year = /^\d{4}/.test(awardDate) ? awardDate.slice(0, 4) : String(new Date().getFullYear());
+  const prefix = `ACC-${year}-`;
+  let maxSeq = 0;
+  for (const item of existing) {
+    if (item.accessionNumber.startsWith(prefix)) {
+      const seq = Number.parseInt(item.accessionNumber.slice(prefix.length), 10);
+      if (!Number.isNaN(seq) && seq > maxSeq) {
+        maxSeq = seq;
+      }
+    }
+  }
+  return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
+}
+
+function sanitizeField(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value.trim().slice(0, maxLength);
+}
+
+function normalizeCategory(raw: string): AwardCategory {
+  const lowered = raw.trim().toLowerCase();
+  if (ALLOWED_CATEGORIES.has(lowered)) {
+    return lowered as AwardCategory;
+  }
+  if (raw.includes('牌')) return 'medal';
+  if (raw.includes('狀') || raw.includes('證')) return 'certificate';
+  return 'trophy';
+}
+
+function normalizeForMatch(text: string): string {
+  return text
+    .replace(/[\s　\-_.,，。()（）「」]/g, '')
+    .replace(/九十五/g, '95')
+    .replace(/九十八/g, '98')
+    .replace(/八十九/g, '89')
+    .replace(/七十四/g, '74')
+    .replace(/七十五/g, '75')
+    .replace(/一百/g, '100')
+    .toLowerCase();
+}
+
+async function startServer(): Promise<void> {
+  ensureStorageReady();
+
+  const app = express();
+  app.use(express.json({ limit: '50mb' }));
+
+  // Serve uploaded photos safely
+  app.get('/api/uploads/:filename', (req: Request, res: Response) => {
+    const safeName = path.basename(String(req.params.filename || ''));
+    if (!/^[a-zA-Z0-9_.-]+$/.test(safeName)) {
+      res.status(400).json({ error: '無效的檔案名稱' });
+      return;
+    }
+    const filePath = path.join(UPLOADS_DIR, safeName);
+    if (!fs.existsSync(filePath)) {
+      res.status(404).json({ error: '找不到指定的典藏影像' });
+      return;
+    }
+    res.sendFile(filePath);
+  });
+
+  // List all awards
+  app.get('/api/awards', (_req: Request, res: Response) => {
+    const awards = readAwards();
+    res.json({ awards });
+  });
+
+  // Batch import / merge awards from Excel + photos
+  app.post('/api/awards/import', (req: Request, res: Response) => {
+    try {
+      const body = req.body as { records?: unknown; mergeExisting?: unknown };
+      if (!Array.isArray(body.records) || body.records.length === 0) {
+        res.status(400).json({ error: '請提供至少一筆要匯入的獎項資料' });
+        return;
+      }
+
+      if (body.records.length > 500) {
+        res.status(400).json({ error: '單次最多匯入 500 筆紀錄' });
+        return;
+      }
+
+      const mergeExisting = body.mergeExisting !== false;
+      const awards = [...readAwards()];
+      let createdCount = 0;
+      let updatedCount = 0;
+      const now = new Date().toISOString();
+
+      for (const rawRow of body.records as BatchImportRow[]) {
+        const awardName = sanitizeField(rawRow.awardName, 160);
+        if (!awardName) {
+          continue;
+        }
+
+        const category = normalizeCategory(sanitizeField(rawRow.category, 30) || 'trophy');
+        const rank = sanitizeField(rawRow.rank, 80) || '獲獎';
+        const awardDateRaw = sanitizeField(rawRow.awardDate, 20);
+        const awardDate = /^\d{4}-\d{2}-\d{2}$/.test(awardDateRaw)
+          ? awardDateRaw
+          : new Date().toISOString().slice(0, 10);
+        const organizer = sanitizeField(rawRow.organizer, 140) || '待補登';
+        const recipient = sanitizeField(rawRow.recipient, 120);
+        const storageNote = sanitizeField(rawRow.storageNote, 240);
+        const incomingAccession = sanitizeField(rawRow.accessionNumber, 40);
+
+        let uploadedImageUrl = '';
+        if (typeof rawRow.imageDataUrl === 'string' && rawRow.imageDataUrl.trim() !== '') {
+          const saved = saveBase64Image(rawRow.imageDataUrl.trim());
+          if (saved) {
+            uploadedImageUrl = saved;
+          }
+        }
+
+        let matchIndex = -1;
+        if (mergeExisting) {
+          if (incomingAccession) {
+            matchIndex = awards.findIndex((a) => a.accessionNumber === incomingAccession);
+          }
+          if (matchIndex === -1) {
+            const normIncomingName = normalizeForMatch(awardName);
+            matchIndex = awards.findIndex((a) => {
+              if (a.awardDate !== awardDate) return false;
+              const normExisting = normalizeForMatch(a.awardName);
+              return (
+                normExisting === normIncomingName ||
+                normExisting.includes(normIncomingName) ||
+                normIncomingName.includes(normExisting)
+              );
+            });
+          }
+        }
+
+        if (matchIndex !== -1) {
+          const existing = awards[matchIndex];
+          if (uploadedImageUrl) {
+            deleteUploadedFileIfLocal(existing.imageUrl);
+          }
+          awards[matchIndex] = {
+            ...existing,
+            category,
+            awardName,
+            rank: rank !== '獲獎' ? rank : existing.rank,
+            awardDate,
+            organizer:
+              organizer !== '待補登'
+                ? organizer
+                : existing.organizer,
+            recipient: recipient || existing.recipient,
+            storageNote: storageNote || existing.storageNote,
+            imageUrl: uploadedImageUrl || existing.imageUrl,
+            updatedAt: now,
+          };
+          updatedCount += 1;
+        } else {
+          const newRecord: AwardRecord = {
+            id: crypto.randomUUID(),
+            accessionNumber:
+              incomingAccession || generateAccessionNumber(awards, awardDate),
+            category,
+            awardName,
+            rank,
+            awardDate,
+            organizer,
+            recipient,
+            storageNote,
+            imageUrl: uploadedImageUrl,
+            createdAt: now,
+            updatedAt: now,
+          };
+          awards.unshift(newRecord);
+          createdCount += 1;
+        }
+      }
+
+      writeAwardsAtomically(awards);
+      res.status(201).json({
+        awards,
+        createdCount,
+        updatedCount,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '批次匯入失敗';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Create a new award
+  app.post('/api/awards', (req: Request, res: Response) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const categoryRaw = sanitizeField(body.category, 20);
+      if (!ALLOWED_CATEGORIES.has(categoryRaw)) {
+        res.status(400).json({ error: '請選擇有效的典藏類型（獎盃、獎牌或獎狀）' });
+        return;
+      }
+      const category = categoryRaw as AwardCategory;
+      const awardName = sanitizeField(body.awardName, 160);
+      const rank = sanitizeField(body.rank, 80);
+      const awardDate = sanitizeField(body.awardDate, 20);
+      const organizer = sanitizeField(body.organizer, 140);
+      const recipient = sanitizeField(body.recipient, 120);
+      const storageNote = sanitizeField(body.storageNote, 240);
+
+      if (!awardName || !rank || !awardDate || !organizer) {
+        res.status(400).json({
+          error: '請完整填寫獎項名稱、名次、日期與主辦單位',
+        });
+        return;
+      }
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(awardDate)) {
+        res.status(400).json({ error: '日期格式必須為 YYYY-MM-DD' });
+        return;
+      }
+
+      let imageUrl = '';
+      if (typeof body.imageDataUrl === 'string' && body.imageDataUrl.trim() !== '') {
+        const saved = saveBase64Image(body.imageDataUrl.trim());
+        if (!saved) {
+          res.status(400).json({ error: '影像格式不正確，僅支援 JPEG、PNG 或 WebP' });
+          return;
+        }
+        imageUrl = saved;
+      } else {
+        res.status(400).json({ error: '請為獎盃、獎牌或獎狀拍攝或上傳照片' });
+        return;
+      }
+
+      const awards = readAwards();
+      const now = new Date().toISOString();
+      const newAward: AwardRecord = {
+        id: crypto.randomUUID(),
+        accessionNumber: generateAccessionNumber(awards, awardDate),
+        category,
+        awardName,
+        rank,
+        awardDate,
+        organizer,
+        recipient,
+        storageNote,
+        imageUrl,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const updated = [newAward, ...awards];
+      writeAwardsAtomically(updated);
+      res.status(201).json({ award: newAward });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '儲存典藏紀錄時發生錯誤';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Update an existing award
+  app.put('/api/awards/:id', (req: Request, res: Response) => {
+    try {
+      const targetId = sanitizeField(req.params.id, 100);
+      const awards = readAwards();
+      const idx = awards.findIndex((item) => item.id === targetId);
+      if (idx === -1) {
+        res.status(404).json({ error: '找不到指定的典藏項目' });
+        return;
+      }
+
+      const existing = awards[idx];
+      const body = req.body as Record<string, unknown>;
+      const categoryRaw = sanitizeField(body.category, 20);
+      if (!ALLOWED_CATEGORIES.has(categoryRaw)) {
+        res.status(400).json({ error: '請選擇有效的典藏類型' });
+        return;
+      }
+
+      const awardName = sanitizeField(body.awardName, 160);
+      const rank = sanitizeField(body.rank, 80);
+      const awardDate = sanitizeField(body.awardDate, 20);
+      const organizer = sanitizeField(body.organizer, 140);
+      const recipient = sanitizeField(body.recipient, 120);
+      const storageNote = sanitizeField(body.storageNote, 240);
+
+      if (!awardName || !rank || !awardDate || !organizer) {
+        res.status(400).json({
+          error: '請完整填寫獎項名稱、名次、日期與主辦單位',
+        });
+        return;
+      }
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(awardDate)) {
+        res.status(400).json({ error: '日期格式必須為 YYYY-MM-DD' });
+        return;
+      }
+
+      let nextImageUrl = existing.imageUrl;
+      if (typeof body.imageDataUrl === 'string' && body.imageDataUrl.trim() !== '') {
+        const saved = saveBase64Image(body.imageDataUrl.trim());
+        if (!saved) {
+          res.status(400).json({ error: '影像格式不正確' });
+          return;
+        }
+        deleteUploadedFileIfLocal(existing.imageUrl);
+        nextImageUrl = saved;
+      }
+
+      const updatedItem: AwardRecord = {
+        ...existing,
+        category: categoryRaw as AwardCategory,
+        awardName,
+        rank,
+        awardDate,
+        organizer,
+        recipient,
+        storageNote,
+        imageUrl: nextImageUrl,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const nextAwards = [...awards];
+      nextAwards[idx] = updatedItem;
+      writeAwardsAtomically(nextAwards);
+      res.json({ award: updatedItem });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '更新典藏紀錄失敗';
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Delete an award
+  app.delete('/api/awards/:id', (req: Request, res: Response) => {
+    const targetId = sanitizeField(req.params.id, 100);
+    const awards = readAwards();
+    const target = awards.find((item) => item.id === targetId);
+    if (!target) {
+      res.status(404).json({ error: '找不到指定的典藏項目' });
+      return;
+    }
+
+    deleteUploadedFileIfLocal(target.imageUrl);
+    const remaining = awards.filter((item) => item.id !== targetId);
+    writeAwardsAtomically(remaining);
+    res.json({ deletedId: targetId });
+  });
+
+  const isProd = process.env.NODE_ENV === 'production';
+  if (!isProd) {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR !== 'true',
+      },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distDir = path.resolve(__dirname, 'dist');
+    app.use(express.static(distDir));
+    app.get('*', (_req: Request, res: Response) => {
+      res.sendFile(path.join(distDir, 'index.html'));
+    });
+  }
+
+  const port = Number.parseInt(process.env.PORT || '3000', 10);
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`School Honor Archive server listening on http://0.0.0.0:${port}`);
+  });
+}
+
+startServer().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});
